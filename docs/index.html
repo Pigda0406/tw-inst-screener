@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>外資 + 自營商 同步買超選股</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>外資 + 自營商 同步買超選股</h1>
+    <p class="sub" id="meta">資料載入中…</p>
+  </header>
+
+  <section class="controls">
+    <label>累計天數
+      <select id="sumDays"></select>
+    </label>
+    <label>連續買超天數
+      <select id="streakDays"></select>
+    </label>
+    <span class="market-group">
+      <label class="chk"><input type="checkbox" id="mTWSE" checked /> 上市</label>
+      <label class="chk"><input type="checkbox" id="mTPEX" checked /> 上櫃</label>
+    </span>
+    <span class="count" id="count"></span>
+  </section>
+
+  <main>
+    <div class="table-wrap">
+      <table id="tbl">
+        <thead>
+          <tr id="headRow"></tr>
+        </thead>
+        <tbody id="body"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="empty" hidden>沒有符合條件的股票。試著放寬「連續買超天數」或勾選更多市場。</p>
+  </main>
+
+  <footer>
+    <p>篩選條件:外資與自營商<strong>各自</strong>在「累計天數」內淨買超 &gt; 0,且最近「連續買超天數」每天都買超。數值單位為<strong>張</strong>。</p>
+    <p class="disc">資料來源:臺灣證券交易所 (TWSE) 與證券櫃檯買賣中心 (TPEX)。本頁僅供參考,<strong>非投資建議</strong>。</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

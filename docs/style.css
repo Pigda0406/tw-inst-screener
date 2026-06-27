@@ -1,0 +1,66 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1a2029;
+  --line: #2b333f;
+  --text: #e6e9ee;
+  --muted: #8b95a3;
+  --accent: #4ea1ff;
+  --pos: #ff5c5c;   /* 台股紅漲：買超用紅 */
+  --neg: #29b765;   /* 賣超用綠 */
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, "Microsoft JhengHei", "PingFang TC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-text-size-adjust: 100%;
+}
+header { padding: 18px 16px 6px; }
+h1 { margin: 0; font-size: 1.25rem; }
+.sub { margin: 6px 0 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+
+.controls {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  padding: 12px 16px; background: var(--panel);
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 5;
+}
+.controls label { font-size: .85rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.controls select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; font-size: .9rem;
+}
+.chk { color: var(--text) !important; }
+.market-group { display: flex; gap: 14px; }
+.count { margin-left: auto; color: var(--accent); font-weight: 600; font-size: .9rem; }
+
+main { padding: 0 8px 40px; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+th, td { padding: 9px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+thead th {
+  position: sticky; top: 49px; background: var(--panel); cursor: pointer;
+  user-select: none; color: var(--muted); font-weight: 600;
+}
+thead th:hover { color: var(--text); }
+th .arrow { font-size: .7rem; opacity: .7; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: #222b37; }
+.code { color: var(--accent); font-weight: 600; }
+.tag { font-size: .72rem; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+.pos { color: var(--pos); }
+.neg { color: var(--neg); }
+.daily { font-size: .72rem; color: var(--muted); letter-spacing: .5px; }
+.empty { text-align: center; color: var(--muted); padding: 40px 16px; }
+
+footer { padding: 16px; color: var(--muted); font-size: .78rem; line-height: 1.6; border-top: 1px solid var(--line); }
+footer strong { color: var(--text); }
+.disc { color: #6b7280; }
+
+@media (max-width: 560px) {
+  .daily { display: none; }            /* 手機隱藏每日明細欄,改用點列查看 */
+  th, td { padding: 8px 6px; font-size: .82rem; }
+  .count { width: 100%; margin: 4px 0 0; }
+}
