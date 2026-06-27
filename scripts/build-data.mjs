@@ -57,11 +57,19 @@ const slash = (d) => `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDat
 const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;     // 顯示用: 2026-06-26
 
 // ---- TWSE 上市 ------------------------------------------------------------
-// 回傳 Map<code, {name, foreign, dealer}>,若當天非交易日回傳 null
-async function fetchTWSE(date) {
-  const url = `https://www.twse.com.tw/rwd/zh/fund/T86?date=${ymd(date)}&selectType=ALL&response=json`;
-  const j = await fetchJson(url);
-  if (!j || j.stat !== 'OK' || !Array.isArray(j.data) || j.data.length === 0) return null;
+// 用較穩定的 fund/T86 路徑(rwd/zh 對部分日期會回矛盾錯誤)。
+// 回傳 Map<code, {name, foreign, dealer}>;取不到(連假或持續失敗)回傳 null。
+// 注意:TWSE 偶有「暫時性」失敗(stat 非 OK),故內建多次重試。
+async function fetchTWSE(date, tries = 4) {
+  const url = `https://www.twse.com.tw/fund/T86?response=json&date=${ymd(date)}&selectType=ALL`;
+  let j = null;
+  for (let i = 0; i < tries; i++) {
+    j = await fetchJson(url);
+    if (j && j.stat === 'OK' && Array.isArray(j.data) && j.data.length > 0) break;
+    j = null;
+    await sleep(2500 * (i + 1));   // 暫時性失敗 → 退避後重試
+  }
+  if (!j) return null;
 
   const f = j.fields;
   const idx = (name) => {
@@ -119,9 +127,20 @@ async function fetchTPEX(date) {
   return map;
 }
 
+// 計算一份 Map 的「指紋」(外資淨買超總和),用來偵測 TWSE 偶發的重複/錯誤資料
+function fingerprint(map) {
+  let fp = 0;
+  for (const v of map.values()) fp += v.foreign;
+  return fp;
+}
+
 // ---- 取得最近 N 個交易日的合併資料 ---------------------------------------
+// 策略:以 TPEX(最穩)判定交易日 → TPEX 有資料才算開盤;該日再抓 TWSE(重試)。
+//       必須「兩市場都拿到」才採用此日,任一缺就整天跳過(絕不以 0 填補造成假訊號)。
+//       並用指紋去重,擋掉 TWSE 偶爾把別天資料重複回傳的情況。
 async function collectRecentDays() {
-  const days = [];           // [{date:'2026-06-26', twse:Map, tpex:Map}, ...] 由舊到新
+  const days = [];           // [{date, twse:Map, tpex:Map}, ...] 由舊到新
+  const twseFps = new Set();
   const cursor = new Date();
   cursor.setHours(0, 0, 0, 0);
 
@@ -131,18 +150,34 @@ async function collectRecentDays() {
     const dow = d.getDay();
     if (dow === 0 || dow === 6) continue; // 週末直接跳過
 
-    process.stderr.write(`抓取 ${iso(d)} ...\n`);
-    let twse = null, tpex = null;
-    try { twse = await fetchTWSE(d); } catch (e) { process.stderr.write(`  TWSE 失敗: ${e.message}\n`); }
-    await sleep(1800);
-    try { tpex = await fetchTPEX(d); } catch (e) { process.stderr.write(`  TPEX 失敗: ${e.message}\n`); }
-    await sleep(1800);
-
-    if (!twse && !tpex) {     // 兩市場皆無資料 → 非交易日(假日)
-      process.stderr.write(`  (非交易日,略過)\n`);
+    // 1) 先問 TPEX:它是交易日的權威判定
+    let tpex = null;
+    try { tpex = await fetchTPEX(d); } catch (e) { process.stderr.write(`${iso(d)} TPEX 失敗: ${e.message}\n`); }
+    await sleep(1500);
+    if (!tpex || tpex.size === 0) {
+      process.stderr.write(`${iso(d)} 非交易日或無上櫃資料,略過\n`);
       continue;
     }
-    days.push({ date: iso(d), twse: twse || new Map(), tpex: tpex || new Map() });
+
+    // 2) 是交易日 → 抓 TWSE(內建重試)
+    let twse = null;
+    try { twse = await fetchTWSE(d); } catch (e) { process.stderr.write(`${iso(d)} TWSE 失敗: ${e.message}\n`); }
+    await sleep(1500);
+    if (!twse || twse.size === 0) {
+      process.stderr.write(`${iso(d)} ⚠ 取不到上市資料,整日跳過(不以 0 填補)\n`);
+      continue;
+    }
+
+    // 3) 指紋去重:擋掉 TWSE 偶發回傳的重複/錯誤資料
+    const fp = fingerprint(twse);
+    if (twseFps.has(fp)) {
+      process.stderr.write(`${iso(d)} ⚠ 上市資料與其他日重複(指紋 ${fp}),跳過\n`);
+      continue;
+    }
+    twseFps.add(fp);
+
+    process.stderr.write(`${iso(d)} ✓ 上市 ${twse.size} 檔 / 上櫃 ${tpex.size} 檔\n`);
+    days.push({ date: iso(d), twse, tpex });
   }
   days.reverse(); // 由舊到新
   return days;
