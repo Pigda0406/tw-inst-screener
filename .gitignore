@@ -1,3 +1,8 @@
 node_modules/
 .DS_Store
 *.log
+
+# 本地回測資料/腳本(不部署)
+scripts/bt_cache/
+scripts/bt_cache2/
+scripts/backtest_result.json
