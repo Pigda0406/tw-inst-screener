@@ -2,8 +2,8 @@
 
 const state = {
   data: null,
-  sumDays: 5,
-  streakDays: 3,
+  sumDays: 10,
+  streakDays: 5,
   markets: { TWSE: true, TPEX: true },
   sortKey: 'foreignSum',
   sortDir: -1, // -1 由大到小
