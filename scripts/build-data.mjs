@@ -1,6 +1,6 @@
 // ===========================================================================
 // build-data.mjs — 抓取 TWSE(上市)+ TPEX(上櫃)三大法人買賣超,
-//                  篩出「外資 + 自營商」近期同步買超的個股,輸出 docs/data.json
+//                  預篩近期有法人買超的個股(外資/投信/自營商),輸出 docs/data.json
 //
 // 執行:  TZ=Asia/Taipei node scripts/build-data.mjs
 // 需求:  Node 18+(內建 fetch),零 npm 依賴
@@ -13,8 +13,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dirname, '..', 'docs');
 const OUT_FILE = join(OUT_DIR, 'data.json');
 
-const NEEDED_DAYS = 6;       // 取最近 6 個交易日(多 1 天讓前端可調「連 N 日」)
-const MAX_LOOKBACK = 18;     // 最多往回看的日曆天數
+const NEEDED_DAYS = 10;      // 取最近 10 個交易日(前端預設累計 10 日)
+const MAX_LOOKBACK = 30;     // 最多往回看的日曆天數(含週末與連假)
 const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) tw-inst-screener' };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -58,7 +58,7 @@ const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate(
 
 // ---- TWSE 上市 ------------------------------------------------------------
 // 用較穩定的 fund/T86 路徑(rwd/zh 對部分日期會回矛盾錯誤)。
-// 回傳 Map<code, {name, foreign, dealer}>;取不到(連假或持續失敗)回傳 null。
+// 回傳 Map<code, {name, foreign, trust, dealer}>;取不到(連假或持續失敗)回傳 null。
 // 注意:TWSE 偶有「暫時性」失敗(stat 非 OK),故內建多次重試。
 async function fetchTWSE(date, tries = 4) {
   const url = `https://www.twse.com.tw/fund/T86?response=json&date=${ymd(date)}&selectType=ALL`;
@@ -81,6 +81,7 @@ async function fetchTWSE(date, tries = 4) {
   const iName = idx('證券名稱');
   const iForeign1 = idx('外陸資買賣超股數(不含外資自營商)');
   const iForeign2 = idx('外資自營商買賣超股數');
+  const iTrust = idx('投信買賣超股數');
   const iDealer = idx('自營商買賣超股數');
 
   const map = new Map();
@@ -90,6 +91,7 @@ async function fetchTWSE(date, tries = 4) {
     map.set(code, {
       name: String(row[iName]).trim(),
       foreign: toInt(row[iForeign1]) + toInt(row[iForeign2]),
+      trust: toInt(row[iTrust]),
       dealer: toInt(row[iDealer]),
     });
   }
@@ -112,17 +114,17 @@ async function fetchTPEX(date) {
     const code = String(row[0]).trim();
     if (!isCommonStock(code)) continue;
 
-    const g1 = toInt(row[4]), g2 = toInt(row[7]), g3 = toInt(row[10]);
-    const g5 = toInt(row[16]), g6 = toInt(row[19]), g7 = toInt(row[22]);
+    const g1 = toInt(row[4]), g2 = toInt(row[7]), g3 = toInt(row[10]), g4 = toInt(row[13]);
+    const g5 = toInt(row[16]), g6 = toInt(row[19]), g7 = toInt(row[22]), total = toInt(row[23]);
 
-    // 自我驗證一次:外資合計 = 不含自營 + 外資自營商;自營合計 = 自行 + 避險
+    // 自我驗證一次:外資合計 = 不含自營 + 外資自營商;自營合計 = 自行 + 避險;三大法人合計 = 外資 + 投信 + 自營
     if (!validated) {
-      if (g1 + g2 !== g3 || g5 + g6 !== g7) {
-        throw new Error(`TPEX 欄位結構與預期不符 (g1+g2=${g1 + g2} vs g3=${g3}, g5+g6=${g5 + g6} vs g7=${g7})。端點可能改版。`);
+      if (g1 + g2 !== g3 || g5 + g6 !== g7 || g3 + g4 + g7 !== total) {
+        throw new Error(`TPEX 欄位結構與預期不符 (g1+g2=${g1 + g2} vs g3=${g3}, g5+g6=${g5 + g6} vs g7=${g7}, g3+g4+g7=${g3 + g4 + g7} vs total=${total})。端點可能改版。`);
       }
       validated = true;
     }
-    map.set(code, { name: String(row[1]).trim(), foreign: g3, dealer: g7 });
+    map.set(code, { name: String(row[1]).trim(), foreign: g3, trust: g4, dealer: g7 });
   }
   return map;
 }
@@ -191,12 +193,13 @@ async function main() {
   const tradingDays = days.map((x) => x.date);
 
   // 彙整每檔股票的每日淨買超(張)。以最後一天(最新)的名稱/市場為準。
-  const stocks = new Map(); // code -> {code,name,market,foreign_daily[],dealer_daily[]}
+  const stocks = new Map(); // code -> {code,name,market,foreign_daily[],trust_daily[],dealer_daily[]}
   const ensure = (code, name, market) => {
     if (!stocks.has(code)) {
       stocks.set(code, {
         code, name, market,
         foreign_daily: new Array(days.length).fill(0),
+        trust_daily: new Array(days.length).fill(0),
         dealer_daily: new Array(days.length).fill(0),
       });
     }
@@ -210,20 +213,22 @@ async function main() {
     for (const [code, v] of day.twse) {
       const s = ensure(code, v.name, 'TWSE');
       s.foreign_daily[di] = Math.round(v.foreign / 1000); // 股 → 張
+      s.trust_daily[di] = Math.round(v.trust / 1000);
       s.dealer_daily[di] = Math.round(v.dealer / 1000);
     }
     for (const [code, v] of day.tpex) {
       const s = ensure(code, v.name, 'TPEX');
       s.foreign_daily[di] = Math.round(v.foreign / 1000);
+      s.trust_daily[di] = Math.round(v.trust / 1000);
       s.dealer_daily[di] = Math.round(v.dealer / 1000);
     }
   });
 
-  // 寬鬆預篩:外資與自營商「近期累計皆 > 0」即輸出(最終嚴格條件交給前端)
+  // 寬鬆預篩:外資/投信/自營商「任一」近期累計 > 0 即輸出(要哪些法人同步買超由前端勾選)
   const sum = (a) => a.reduce((p, c) => p + c, 0);
   const result = [];
   for (const s of stocks.values()) {
-    if (sum(s.foreign_daily) > 0 && sum(s.dealer_daily) > 0) result.push(s);
+    if (sum(s.foreign_daily) > 0 || sum(s.trust_daily) > 0 || sum(s.dealer_daily) > 0) result.push(s);
   }
   result.sort((a, b) => sum(b.foreign_daily) - sum(a.foreign_daily));
 
