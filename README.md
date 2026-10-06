@@ -14,12 +14,14 @@
 ## 運作方式
 ```
 GitHub Actions(每交易日傍晚排程)
-   └─ scripts/build-data.mjs  抓 TWSE + TPEX 三大法人買賣超 → 篩選 → docs/data.json
-GitHub Pages(/docs)
-   └─ index.html / app.js     讀 data.json,前端套用條件、排序、顯示
+   └─ scripts/build-data.mjs  抓 TWSE + TPEX 三大法人買賣超 → 篩選 → data.json → 上傳 R2
+Cloudflare Workers
+   ├─ docs/                   靜態頁面(index.html / app.js),push 到 master 時自動部署
+   └─ worker/index.js         /data.json 從 R2(bucket tw-stocks-data)讀出回傳
 ```
 - 資料來源:臺灣證券交易所(TWSE T86)、證券櫃檯買賣中心(TPEX)。
-- 純前端讀取同源 `data.json`,沒有 CORS 問題;**零 npm 依賴**,只需 Node 18+。
+- 前端讀取同源 `/data.json`,沒有 CORS 問題;資料更新只寫 R2,不 commit 回 repo、也不需重新部署。
+- 抓資料腳本**零 npm 依賴**,只需 Node 18+;部署與上傳用 `wrangler`(需 Node 22+)。
 
 ## 本機開發
 ```bash
@@ -27,13 +29,24 @@ node scripts/build-data.mjs     # 重新抓資料,產生 docs/data.json(建議 T
 node scripts/serve.mjs          # http://localhost:8080 預覽網頁
 node scripts/verify.mjs         # 列印目前符合條件的股票(自我檢查用)
 ```
+> `docs/data.json` 只存在本機(已列入 `.gitignore`、`docs/.assetsignore`),不會被 commit 或部署。
+> 若要連同 Worker + R2 一起在本機測試:
+> ```bash
+> npx wrangler r2 object put tw-stocks-data/data.json --file docs/data.json --local
+> npx wrangler dev                # 用本機模擬的 R2
+> ```
 
-## 部署到 GitHub Pages
-1. 建一個 GitHub repo,把本資料夾 push 上去。
-2. **Settings → Pages**:Source 選 `Deploy from a branch`,分支 `main`、資料夾 `/docs`。
-3. **Settings → Actions → General → Workflow permissions**:設為 *Read and write permissions*。
-4. 到 **Actions** 頁手動跑一次「更新法人買賣超資料」(Run workflow),完成後開
-   `https://<你的帳號>.github.io/<repo>/` 即可查看。之後每個交易日會自動更新。
+## 部署到 Cloudflare
+1. **Cloudflare → R2**:建立 bucket `tw-stocks-data`(名稱需與 `wrangler.jsonc` 一致)。
+2. **Cloudflare → My Profile → API Tokens**:建立 Custom token,權限 `Account / Workers R2 Storage / Edit`。
+3. **GitHub repo → Settings → Secrets and variables → Actions**:新增
+   - `CLOUDFLARE_API_TOKEN`:上一步的 Token
+   - `CLOUDFLARE_ACCOUNT_ID`:Cloudflare Dashboard 網址 `dash.cloudflare.com/<這段>/` 即是
+4. **Cloudflare → Workers & Pages → Create application → Import a repository**:選本 repo,
+   名稱填 `tw-inst-screener`(需與 `wrangler.jsonc` 的 `name` 一致),Build command 留空,
+   Deploy command 用預設 `npx wrangler deploy`。之後 push 到 `master` 會自動部署。
+5. 到 GitHub **Actions** 頁手動跑一次「更新法人買賣超資料」(Run workflow),把資料寫進 R2,
+   完成後開 `https://tw-inst-screener.<你的子網域>.workers.dev/` 即可查看。之後每個交易日會自動更新。
 
 ## 免責
 本專案僅供研究參考,**非投資建議**。資料以官方公告為準,程式可能因官方端點調整而需維護。
