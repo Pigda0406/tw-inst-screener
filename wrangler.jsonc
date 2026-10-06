@@ -1,0 +1,7 @@
+{
+  "name": "tw-inst-screener",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-05-01",
+  "assets": { "directory": "./docs" },
+  "r2_buckets": [{ "binding": "DATA", "bucket_name": "tw-stocks-data" }]
+}

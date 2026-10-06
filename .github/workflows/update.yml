@@ -8,7 +8,7 @@ on:
   workflow_dispatch:          # 也可在 Actions 頁面手動觸發
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: update-data
@@ -22,21 +22,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: 抓取並產生 data.json
         run: node scripts/build-data.mjs
         env:
           TZ: Asia/Taipei
 
-      - name: 有變更才 commit & push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain docs/data.json)" ]; then
-            git add docs/data.json
-            git commit -m "chore: 更新法人買賣超資料 ($(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M'))"
-            git push
-          else
-            echo "資料無變更,略過 commit。"
-          fi
+      - name: 上傳 data.json 到 R2
+        run: npx -y wrangler@4 r2 object put tw-stocks-data/data.json --file docs/data.json --content-type application/json --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
