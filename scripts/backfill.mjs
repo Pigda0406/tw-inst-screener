@@ -5,14 +5,19 @@
 //                                                  [--from YYYY-MM-DD] [--to YYYY-MM-DD]
 //   --days    由 --to(預設今天)往回回補的交易日數,預設 60;有 --from 時改以 --from 為下限
 //   --sources 只處理指定的來源群組;非 inst 來源只會補「法人已完整」的日期
+//
+//        TZ=Asia/Taipei node scripts/backfill.mjs --tdcc-weeks 2
+//   --tdcc-weeks  只回補集保:從集保官網查詢頁回補「最新一週之前」的 N 週(最新一週由 ingest-weekly 抓 CSV)。
+//                 一次請求只能查一檔一週,只查 stocks 表內的上市櫃普通股(約 2,000 檔 × N 次請求)。
 // 已存在的日期與來源直接跳過,可以中斷後續跑。
 // ===========================================================================
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { iso, todayTaipei, isWeekend } from '../lib/dates.mjs';
-import { openDb } from '../lib/db.mjs';
+import { iso, todayTaipei, isWeekend, nowTaipei } from '../lib/dates.mjs';
+import { openDb, writeTdcc, tdccCodes, logIngest } from '../lib/db.mjs';
 import { ingestDate, GROUPS } from '../lib/ingest.mjs';
+import { openTdccSession } from '../lib/sources/tdcc.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH ?? join(__dirname, '..', 'data', 'history.sqlite');
@@ -23,6 +28,7 @@ const { values: args } = parseArgs({
     sources: { type: 'string', default: GROUPS.join(',') },
     from: { type: 'string' },
     to: { type: 'string' },
+    'tdcc-weeks': { type: 'string' },
   },
 });
 
@@ -31,7 +37,46 @@ const parseDate = (s) => {
   return new Date(`${s}T00:00:00`);
 };
 
+// 集保歷史:逐檔逐週查詢,每檔查完立即寫入,中斷後重跑會從缺的地方繼續
+async function backfillTdcc(db, weeksBack) {
+  const session = await openTdccSession();
+  const weeks = session.weeks().slice(1, 1 + weeksBack);
+  const codes = db.prepare('SELECT code FROM stocks ORDER BY code').all().map((r) => r.code);
+  process.stderr.write(`集保回補週別: ${weeks.join(', ')};每週 ${codes.length} 檔\n`);
+
+  for (const week of weeks) {
+    const dataDate = `${week.slice(0, 4)}-${week.slice(4, 6)}-${week.slice(6, 8)}`;
+    const done = tdccCodes(db, dataDate);
+    const todo = codes.filter((c) => !done.has(c));
+    let ok = 0, empty = 0;
+    const errors = [];
+    for (const [i, code] of todo.entries()) {
+      try {
+        const r = await session.query(code, week);
+        if (r) { writeTdcc(db, dataDate, new Map([[code, r.levels]]), nowTaipei()); ok++; } else empty++;
+      } catch (e) {
+        errors.push(`${code}: ${e.message}`);
+        // 結構性問題(網站改版等)會讓每一檔都失敗,不要白跑幾個小時
+        if (errors.length >= 50 && errors.length > ok) throw new Error(`集保回補失敗過多(✓ ${ok} ✗ ${errors.length}),停止。例: ${errors.slice(0, 3).join('; ')}`);
+      }
+      if ((i + 1) % 100 === 0) process.stderr.write(`  ${dataDate} ${i + 1}/${todo.length}(✓ ${ok} 查無 ${empty} ✗ ${errors.length})\n`);
+    }
+    const message = `已有 ${done.size}、新寫入 ${ok}、查無 ${empty}、失敗 ${errors.length}${errors.length ? `: ${errors.slice(0, 5).join('; ')}` : ''}`;
+    logIngest(db, { source: 'tdcc-history', date: dataDate, status: errors.length ? 'error' : 'ok', rows: ok, message });
+    process.stderr.write(`集保 ${dataDate} ${message}\n`);
+  }
+}
+
 async function main() {
+  if (args['tdcc-weeks'] != null) {
+    const n = Number(args['tdcc-weeks']);
+    if (!(Number.isInteger(n) && n > 0)) throw new Error(`--tdcc-weeks 必須是正整數: ${args['tdcc-weeks']}`);
+    const db = openDb(DB_PATH);
+    await backfillTdcc(db, n);
+    db.close();
+    return;
+  }
+
   const groups = args.sources.split(',').map((s) => s.trim());
   const bad = groups.filter((g) => !GROUPS.includes(g));
   if (bad.length) throw new Error(`未知的來源: ${bad.join(', ')}(可用: ${GROUPS.join(', ')})`);
