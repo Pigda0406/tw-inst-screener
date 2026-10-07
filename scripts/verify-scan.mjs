@@ -1,13 +1,14 @@
 // ===========================================================================
 // verify-scan.mjs — 自我檢查用
 //
-// 執行:  node scripts/verify-scan.mjs --stats     各表的日期數、筆數、日期範圍,以及近期 ingest 錯誤
-// (P4 會加入今日候選清單)
+// 執行:  node scripts/verify-scan.mjs              最新掃描日的階段統計與 ACCUMULATION 前 20 檔(含 breakdown)
+//        node scripts/verify-scan.mjs --stats      各表的日期數、筆數、日期範圍,以及近期 ingest 錯誤
 // ===========================================================================
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { openDb } from '../lib/db.mjs';
+import { scoreStock } from '../lib/score.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH ?? join(__dirname, '..', 'data', 'history.sqlite');
@@ -45,7 +46,53 @@ function printStats(db) {
   for (const e of errors) console.log(`  ${e.run_at} ${e.source} ${e.date ?? ''} ${e.message ?? ''}`);
 }
 
+const pct = (v, d = 1) => (v == null ? '—' : `${(v * 100).toFixed(d)}%`);
+const num = (v, d = 2) => (v == null ? '—' : v.toFixed(d));
+
+function printScan(db) {
+  const t = db.prepare('SELECT MAX(date) AS d FROM scan_daily').get().d;
+  if (!t) return console.log('scan_daily 沒有資料,先執行 node scripts/score.mjs');
+  const rows = db.prepare('SELECT s.code, k.name, k.market, s.score, s.stage, s.features, s.signals FROM scan_daily s JOIN stocks k USING (code) WHERE s.date = ? ORDER BY s.score DESC, s.code')
+    .all(t).map((r) => ({ ...r, features: JSON.parse(r.features), signals: JSON.parse(r.signals) }));
+
+  const counts = {};
+  for (const r of rows) counts[r.stage] = (counts[r.stage] ?? 0) + 1;
+  const scorable = rows.length - (counts.EXCLUDED ?? 0);
+  console.log(`掃描日 ${t}:共 ${rows.length} 檔,可評分(非 EXCLUDED)${scorable} 檔`);
+  for (const k of ['ACCUMULATION', 'WATCH', 'OVERHEATED', 'NEUTRAL', 'EXCLUDED']) {
+    const n = counts[k] ?? 0;
+    console.log(`  ${k.padEnd(13)} ${String(n).padStart(5)}${k === 'EXCLUDED' ? '' : `  (${pct(n / scorable)} of 可評分)`}`);
+  }
+  const accRatio = (counts.ACCUMULATION ?? 0) / scorable;
+  if (accRatio > 0.05) console.log(`  ⚠ ACCUMULATION 占可評分 ${pct(accRatio)},超過 5%,建議提高門檻`);
+
+  // 分數分布
+  const hist = {};
+  for (const r of rows) if (r.stage !== 'EXCLUDED') hist[Math.floor(r.score / 10) * 10] = (hist[Math.floor(r.score / 10) * 10] ?? 0) + 1;
+  console.log(`  分數分布(可評分): ${Object.entries(hist).sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}~${+k + 9}: ${v}`).join(' / ')}`);
+
+  // missing 特徵統計(可評分個股)
+  const miss = {};
+  for (const r of rows) if (r.stage !== 'EXCLUDED') for (const s of r.signals) if (s.startsWith('missing:')) miss[s.slice(8)] = (miss[s.slice(8)] ?? 0) + 1;
+  console.log(`  缺值特徵(可評分個股): ${Object.entries(miss).map(([k, v]) => `${k} ${v}`).join(' / ') || '無'}`);
+
+  const top = rows.filter((r) => r.stage === 'ACCUMULATION').slice(0, 20);
+  console.log(`\nACCUMULATION 前 ${top.length} 檔(法人/集中/價格/量能/融資):`);
+  console.log('代號  名稱        市場  分數  法 集 價 量 融  法人%股本 買超天 20日漲 量比  融資20日 大戶400%');
+  for (const r of top) {
+    const f = r.features;
+    const b = scoreBreakdown(r);
+    console.log(`${r.code}  ${r.name.padEnd(10, '　').slice(0, 5)}  ${r.market}  ${String(r.score).padStart(3)}  ${b}  ${num(f.inst_net_20_pct).padStart(8)} ${String(f.inst_buy_days_20 ?? '—').padStart(5)} ${pct(f.ret_20).padStart(6)} ${num(f.vol_ratio).padStart(5)} ${pct(f.margin_chg_20).padStart(8)} ${num(f.big400_pct).padStart(7)}`);
+  }
+}
+
+// scan_daily 沒存 breakdown,由特徵重算(與 score.mjs 相同的純函式)
+function scoreBreakdown(r) {
+  const b = scoreStock(r.features).breakdown;
+  return [b.inst, b.concentration, b.price, b.volume, b.margin].map((v) => String(v).padStart(2)).join(' ');
+}
+
 const db = openDb(DB_PATH);
 if (args.stats) printStats(db);
-else console.log('用法: node scripts/verify-scan.mjs --stats');
+else printScan(db);
 db.close();
