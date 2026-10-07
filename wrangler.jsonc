@@ -3,5 +3,8 @@
   "main": "worker/index.js",
   "compatibility_date": "2026-05-01",
   "assets": { "directory": "./docs" },
-  "r2_buckets": [{ "binding": "DATA", "bucket_name": "tw-stocks-data" }]
+  "r2_buckets": [{ "binding": "DATA", "bucket_name": "tw-stocks-data" }],
+  // UTC;準時觸發 GitHub Actions(台北 18:00 / 20:00)。星期用英文縮寫,Cloudflare 的 1 是週日。
+  "triggers": { "crons": ["0 10 * * MON-FRI", "0 12 * * MON-FRI"] },
+  "observability": { "enabled": true }
 }

@@ -13,11 +13,12 @@
 
 ## 運作方式
 ```
-GitHub Actions(每交易日傍晚排程)
+Cloudflare Cron Triggers(週一至五 台北 18:00 / 20:00 準時)→ 觸發 GitHub Actions
+GitHub Actions(自身排程常延遲,保留為備援)
    └─ scripts/build-data.mjs  抓 TWSE + TPEX 三大法人買賣超 → 篩選 → data.json → 上傳 R2
 Cloudflare Workers
    ├─ docs/                   靜態頁面(index.html / app.js),push 到 master 時自動部署
-   └─ worker/index.js         /data.json 從 R2(bucket tw-stocks-data)讀出回傳
+   └─ worker/index.js         /data.json 從 R2(bucket tw-stocks-data)讀出回傳;排程時觸發 GitHub Actions
 ```
 - 資料來源:臺灣證券交易所(TWSE T86)、證券櫃檯買賣中心(TPEX)。
 - 前端讀取同源 `/data.json`,沒有 CORS 問題;資料更新只寫 R2,不 commit 回 repo、也不需重新部署。
@@ -45,7 +46,11 @@ node scripts/verify.mjs         # 列印目前符合條件的股票(自我檢查
 4. **Cloudflare → Workers & Pages → Create application → Import a repository**:選本 repo,
    名稱填 `tw-inst-screener`(需與 `wrangler.jsonc` 的 `name` 一致),Build command 留空,
    Deploy command 用預設 `npx wrangler deploy`。之後 push 到 `master` 會自動部署。
-5. 到 GitHub **Actions** 頁手動跑一次「更新法人買賣超資料」(Run workflow),把資料寫進 R2,
+5. **GitHub → Settings → Developer settings → Fine-grained tokens**:建立只授權本 repo、
+   `Actions: Read and write` 的 token,存到 Worker 的 Secret `GITHUB_TOKEN`
+   (Cloudflare → Worker → Settings → Variables and Secrets,或 `npx wrangler secret put GITHUB_TOKEN`)。
+   token 到期後 Cloudflare 排程會失效,只剩 GitHub 自身排程。
+6. 到 GitHub **Actions** 頁手動跑一次「更新法人買賣超資料」(Run workflow),把資料寫進 R2,
    完成後開 `https://tw-inst-screener.<你的子網域>.workers.dev/` 即可查看。之後每個交易日會自動更新。
 
 ## 免責
