@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>主力吸籌掃描</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    /* 吸籌掃描頁專用;共用樣式在 style.css,不修改以免影響法人同步買超頁 */
+    .nav { float: right; font-size: .85rem; color: var(--accent); text-decoration: none; }
+    .nav:hover { text-decoration: underline; }
+    .warn { margin: 8px 16px 0; padding: 8px 12px; border-radius: 6px; background: #3a3214; border: 1px solid #6b5a1a; color: #f3d36b; font-size: .82rem; }
+    .tabs { display: flex; gap: 6px; }
+    .tabs button {
+      background: var(--bg); color: var(--muted); border: 1px solid var(--line);
+      border-radius: 6px; padding: 5px 12px; font-size: .88rem; cursor: pointer;
+    }
+    .tabs button.on { color: var(--text); border-color: var(--accent); background: #1d2a3a; }
+    .score { font-weight: 700; }
+    .sig { display: inline-block; font-size: .72rem; padding: 1px 6px; margin: 1px 2px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+    .sig.hot { color: var(--pos); border-color: #6b2a2a; }
+    td.sigs { text-align: left; white-space: normal; min-width: 180px; }
+    tr.detail { cursor: default; background: var(--panel); }
+    tr.detail:hover { background: var(--panel); }
+    tr.detail td { text-align: left; white-space: normal; }
+    .bars { display: grid; grid-template-columns: 5.5em 1fr 4em; gap: 4px 10px; align-items: center; max-width: 460px; font-size: .8rem; }
+    .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+    .bar > i { display: block; height: 100%; background: var(--accent); }
+    .muted { color: var(--muted); font-size: .78rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="nav" href="index.html">← 法人同步買超</a>
+    <h1>主力吸籌掃描</h1>
+    <p class="sub" id="meta">資料載入中…</p>
+  </header>
+  <div class="warn" id="warn" hidden>集保資料累積不足，籌碼集中分數僅供參考。</div>
+
+  <section class="controls">
+    <span class="tabs" id="tabs"></span>
+    <span class="market-group">
+      <label class="chk"><input type="checkbox" id="mTWSE" checked /> 上市</label>
+      <label class="chk"><input type="checkbox" id="mTPEX" checked /> 上櫃</label>
+    </span>
+    <label>最低分數
+      <select id="minScore"></select>
+    </label>
+    <span class="count" id="count"></span>
+  </section>
+
+  <main>
+    <div class="table-wrap">
+      <table id="tbl">
+        <thead>
+          <tr id="headRow"></tr>
+        </thead>
+        <tbody id="body"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="empty" hidden>這個分類目前沒有符合條件的股票。</p>
+  </main>
+
+  <footer>
+    <p>評分(0~100):法人緩買 30、籌碼集中 30、價格未動 20、量能溫和 10、融資退場 10。<strong>吸籌</strong> ≥ 60 分、<strong>觀察</strong> 45~59 分；<strong>過熱</strong>為 20 日漲幅 &gt; 25% 或量比 &gt; 2.5，不論分數。只列 20 日平均成交值 ≥ 2,000 萬元的個股。點列可看各群組得分，點代號開啟 Yahoo 股市。</p>
+    <p class="disc">資料來源:臺灣證券交易所、證券櫃檯買賣中心、臺灣集中保管結算所。本系統只是籌碼與價量的統計篩選工具,<strong>不構成投資建議</strong>;分數權重為 v1 主觀設定,尚未經回測驗證。</p>
+  </footer>
+
+  <script src="scan.js"></script>
+</body>
+</html>

@@ -38,6 +38,62 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      # ---- 吸籌掃描器 ----
+      # 放在既有 data.json 流程之後:掃描器任何一步失敗,都不影響「法人同步買超」頁面的更新。
+
+      - name: 下載歷史資料庫
+        # 下載失敗就停止(不建新檔),避免暫時性錯誤時用空 DB 覆蓋 R2 上的歷史資料。
+        # 首次部署要先在本機 backfill 後手動上傳,見 README。
+        run: |
+          mkdir -p data
+          npx -y wrangler@4 r2 object get tw-stocks-data/db/history.sqlite --file data/history.sqlite --remote
+          test -s data/history.sqlite
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Ingest 每日資料
+        run: node scripts/ingest-daily.mjs
+        env:
+          TZ: Asia/Taipei
+
+      - name: Ingest 集保(有新資料才寫入)
+        id: tdcc
+        run: node scripts/ingest-weekly.mjs
+        env:
+          TZ: Asia/Taipei
+        continue-on-error: true   # 集保失敗不影響每日流程
+
+      - name: 上傳資料庫
+        # ingest 完立刻上傳,評分失敗也不會遺失當天資料(集保 CSV 只有最新一週,錯過就補不回來)
+        run: npx -y wrangler@4 r2 object put tw-stocks-data/db/history.sqlite --file data/history.sqlite --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: 備份資料庫(本次寫入新的集保週)
+        # 集保 CSV 只有最新一週,寫入後 DB 是唯一來源,所以每週額外留一份。保留最近 8 份,清理舊檔待辦。
+        if: steps.tdcc.outputs.new_tdcc != ''
+        run: npx -y wrangler@4 r2 object put "tw-stocks-data/backups/history-${{ steps.tdcc.outputs.new_tdcc }}.sqlite" --file data/history.sqlite --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: 計算吸籌分數
+        run: node scripts/score.mjs
+        env:
+          TZ: Asia/Taipei
+
+      - name: 上傳 scan 結果
+        run: |
+          npx -y wrangler@4 r2 object put tw-stocks-data/scan.json --file docs/scan.json --content-type application/json --remote
+          for f in data/features/*.json; do
+            npx -y wrangler@4 r2 object put "tw-stocks-data/features/$(basename "$f")" --file "$f" --content-type application/json --remote
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
   keepalive:
     if: github.event.schedule == '0 0 1 * *'
     runs-on: ubuntu-latest

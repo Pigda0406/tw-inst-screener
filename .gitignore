@@ -16,3 +16,6 @@ data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# wrangler dev 本機狀態(本機 R2 模擬資料)
+.wrangler/

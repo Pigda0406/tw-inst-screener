@@ -4,12 +4,12 @@
 // 執行:  TZ=Asia/Taipei node scripts/score.mjs [--date YYYY-MM-DD]
 //   --date  掃描日,預設為最新一個兩市場都完整的交易日
 // 輸出:  docs/scan.json(ACCUMULATION / WATCH / OVERHEATED)
-//        data/features/<1..9>.json(全部個股,依代號首位數分片,供 /api/stock/:code)
+//        data/features/<10..99>.json(全部個股,依代號前兩碼分片,供 /api/stock/:code)
 //        scan_daily 表(全部個股,供日後回測)
 // ===========================================================================
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { nowTaipei } from '../lib/dates.mjs';
 import { openDb, tx, upsertStmt } from '../lib/db.mjs';
@@ -121,15 +121,17 @@ function main() {
   mkdirSync(dirname(SCAN_PATH), { recursive: true });
   writeFileSync(SCAN_PATH, JSON.stringify({ ...meta, counts, stocks: published, note: '僅供研究參考，非投資建議。' }));
 
-  // features 分片:依代號首位數 1~9,以代號為 key 方便 Worker 直接查
+  // features 分片:依代號前兩碼 10~99(每片約 10~20 KB,Worker 免費方案 CPU 10ms 內可解析),以代號為 key
+  // 先清空目錄,避免殘留舊分片被上傳;沒有個股的前兩碼也寫空分片,讓 /api/stock 一律回 404 而不是讀到舊檔
+  rmSync(FEATURES_DIR, { recursive: true, force: true });
   mkdirSync(FEATURES_DIR, { recursive: true });
-  for (let shard = 1; shard <= 9; shard++) {
-    const stocks = Object.fromEntries(results.filter((r) => r.code[0] === String(shard)).map((r) => [r.code, r]));
-    writeFileSync(join(FEATURES_DIR, `${shard}.json`), JSON.stringify({ ...meta, stocks }));
-  }
+  const shards = new Map();
+  for (let p = 10; p <= 99; p++) shards.set(String(p), {});
+  for (const r of results) shards.get(r.code.slice(0, 2))[r.code] = r;
+  for (const [prefix, stocks] of shards) writeFileSync(join(FEATURES_DIR, `${prefix}.json`), JSON.stringify({ ...meta, stocks }));
 
   process.stderr.write(`掃描日 ${t}(${days.length} 個交易日,集保 ${tdccWeeks} 週)共 ${results.length} 檔: ${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(' / ')}\n`);
-  process.stderr.write(`輸出 ${SCAN_PATH}、${FEATURES_DIR}/1..9.json\n`);
+  process.stderr.write(`輸出 ${SCAN_PATH}、${FEATURES_DIR}/10..99.json\n`);
 }
 
 try {

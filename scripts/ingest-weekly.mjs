@@ -3,10 +3,12 @@
 //
 // 執行:  TZ=Asia/Taipei node scripts/ingest-weekly.mjs
 // 該週已寫入就記 skipped 後結束,所以每天執行都可以。
+// 在 GitHub Actions 中寫入新的一週時,會輸出 new_tdcc=<資料日期>(workflow 用來決定是否備份 DB)。
 // 驗證:Σ股數(1..15) + 差異數調整 = 合計、Σ人數(1..15) = 合計人數;不符超過 1% 整批放棄。
 // ===========================================================================
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { appendFileSync } from 'node:fs';
 import { nowTaipei } from '../lib/dates.mjs';
 import { openDb, writeTdcc, tdccCodes, logIngest } from '../lib/db.mjs';
 import { fetchTdccCsv } from '../lib/sources/tdcc.mjs';
@@ -44,6 +46,8 @@ async function main() {
     const message = invalid.length ? `驗證不符略過 ${invalid.length} 檔: ${invalid.map((x) => x.code).join(',')}` : null;
     logIngest(db, { source: 'tdcc', date: dataDate, status: 'ok', rows: n, message });
     process.stderr.write(`集保 ${dataDate} ✓ ${n} 檔${message ? `(${message})` : ''}\n`);
+    // GitHub Actions:告訴 workflow 這次寫入了新的一週,要額外備份 DB(§9.3)
+    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `new_tdcc=${dataDate}\n`);
   } finally {
     db.close();
   }
