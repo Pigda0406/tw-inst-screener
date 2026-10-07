@@ -43,3 +43,20 @@ test('寫入中途失敗整批 rollback,該日不可被標成完整(否則之後
   assert.equal(count(db, 'inst_daily'), 0);
   assert.equal(completeDates(db).size, 0);
 });
+
+test('price/margin/qfii 寫入冪等,且依市場判斷是否已有資料(上市失敗、上櫃成功時只補上市)', async () => {
+  const { writeDailyRows, hasMarketRows } = await import('../lib/db.mjs');
+  const db = openDb();
+  writeInstDay(db, '2026-10-06', day({ 2330: v('台積電', 1) }, { 5347: v('世界', 1) }));
+  const cols = ['open', 'high', 'low', 'close', 'volume', 'value'];
+  const tpex = new Map([['5347', { open: 184.5, high: 195, low: 184.5, close: 191, volume: 33208000, value: 6341293500 }]]);
+  writeDailyRows(db, 'price_daily', cols, '2026-10-06', tpex);
+  writeDailyRows(db, 'price_daily', cols, '2026-10-06', tpex);
+  assert.equal(count(db, 'price_daily'), 1);
+  assert.equal(hasMarketRows(db, 'price_daily', '2026-10-06', 'TPEX'), true);
+  assert.equal(hasMarketRows(db, 'price_daily', '2026-10-06', 'TWSE'), false);
+
+  const halt = new Map([['2330', { open: null, high: null, low: null, close: null, volume: 0, value: 0 }]]);
+  writeDailyRows(db, 'price_daily', cols, '2026-10-06', halt);
+  assert.equal(db.prepare("SELECT close FROM price_daily WHERE code = '2330'").get().close, null);
+});
