@@ -48,17 +48,19 @@ async function backfillTdcc(db, weeksBack) {
     const dataDate = `${week.slice(0, 4)}-${week.slice(4, 6)}-${week.slice(6, 8)}`;
     const done = tdccCodes(db, dataDate);
     const todo = codes.filter((c) => !done.has(c));
-    let ok = 0, empty = 0;
+    let ok = 0, empty = 0, emptyStreak = 0;
     const errors = [];
     for (const [i, code] of todo.entries()) {
       try {
         const r = await session.query(code, week);
-        if (r) { writeTdcc(db, dataDate, new Map([[code, r.levels]]), nowTaipei()); ok++; } else empty++;
+        if (r) { writeTdcc(db, dataDate, new Map([[code, r.levels]]), nowTaipei()); ok++; emptyStreak = 0; } else { empty++; emptyStreak++; }
       } catch (e) {
         errors.push(`${code}: ${e.message}`);
         // 結構性問題(網站改版等)會讓每一檔都失敗,不要白跑幾個小時
         if (errors.length >= 50 && errors.length > ok) throw new Error(`集保回補失敗過多(✓ ${ok} ✗ ${errors.length}),停止。例: ${errors.slice(0, 3).join('; ')}`);
       }
+      // 正常每週只有少數幾檔查無;連續大量查無代表網站或 session 出問題,停下來而不是當成「查無」帶過
+      if (emptyStreak >= 50) throw new Error(`集保連續 ${emptyStreak} 檔查無資料(停在 ${code}),網站可能異常,停止。重跑會從缺的地方繼續。`);
       if ((i + 1) % 100 === 0) process.stderr.write(`  ${dataDate} ${i + 1}/${todo.length}(✓ ${ok} 查無 ${empty} ✗ ${errors.length})\n`);
     }
     const message = `已有 ${done.size}、新寫入 ${ok}、查無 ${empty}、失敗 ${errors.length}${errors.length ? `: ${errors.slice(0, 5).join('; ')}` : ''}`;
